@@ -35,18 +35,42 @@ def load_data(path: str) -> pd.DataFrame:
 
 @st.cache_resource(show_spinner=False)
 def try_load_model(paths=MODEL_PATHS):
-    import joblib, pickle
+    import joblib, pickle, traceback
+    last_err = None
     for p in paths:
         if os.path.exists(p):
+            # intento con joblib
             try:
-                return joblib.load(p)
-            except Exception:
+                m = joblib.load(p)
+                return m
+            except Exception as e:
+                last_err = f"{p} (joblib): {e}"
+                # intento con pickle crudo
                 try:
                     with open(p, "rb") as f:
-                        return pickle.load(f)
-                except Exception:
-                    continue
+                        m = pickle.load(f)
+                        return m
+                except Exception as e2:
+                    last_err = f"{last_err} | {p} (pickle): {e2}"
+    if last_err:
+        st.warning(f"No pude cargar el modelo: {last_err}")
     return None
+
+# --- DEBUG rápido del modelo (ponelo DEBAJO de modelo = try_load_model())
+with st.expander("🔧 Debug modelo", expanded=False):
+    st.write({"cwd": os.getcwd()})
+    st.write({"models_dir_exists": os.path.exists("models")})
+    st.write({"model_joblib_exists": os.path.exists("models/model.joblib")})
+    if os.path.exists("models"):
+        st.write({"models_dir_list": os.listdir("models")})
+    # detectar si es un puntero de Git LFS
+    try:
+        with open("models/model.joblib", "rb") as f:
+            head = f.read(200)
+        is_lfs = (b"git-lfs" in head.lower()) or (b"github.com/spec/v1" in head.lower())
+        st.write({"posible_archivo_LFS": bool(is_lfs)})
+    except Exception as _:
+        pass
 
 df = load_data(DATA_PATH)
 modelo = try_load_model()
