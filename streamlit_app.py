@@ -56,8 +56,7 @@ def try_load_model(paths=MODEL_PATHS):
         st.warning(f"No pude cargar el modelo: {last_err}")
     return None
 
-# --- DEBUG rápido del modelo (ponelo DEBAJO de modelo = try_load_model())
-with st.expander("🔧 Debug modelo", expanded=False):
+with st.expander("Debug modelo", expanded=False):
     st.write({"cwd": os.getcwd()})
     st.write({"models_dir_exists": os.path.exists("models")})
     st.write({"model_joblib_exists": os.path.exists("models/model.joblib")})
@@ -74,6 +73,16 @@ with st.expander("🔧 Debug modelo", expanded=False):
 
 df = load_data(DATA_PATH)
 modelo = try_load_model()
+
+# Columnas que representan año
+YEAR_COLS = [c for c in df.columns if str(c).lower() in ["año", "anio", "year"]]
+
+for c in YEAR_COLS:
+    try:
+        df[c] = pd.to_numeric(df[c], errors="coerce").round().astype("Int64")
+    except Exception:
+        pass
+
 
 num_cols = [c for c in df.select_dtypes(include=[np.number]).columns]
 cat_cols = [c for c in df.columns if c not in num_cols]
@@ -207,6 +216,95 @@ elif page == "Modelo":
     else:
         st.success("Modelo cargado correctamente.")
 
+        # --- Resumen del estimador final
+        final_est = getattr(modelo, "named_steps", {}).get("model", modelo)
+        st.write(f"**Estimador final:** `{final_est.__class__.__name__}`")
+        with st.expander("Hiperparámetros del estimador final"):
+            try:
+                # mostrar solo params simples para que sea legible
+                params = final_est.get_params()
+                params = {k: v for k, v in params.items()
+                          if isinstance(v, (int, float, str, bool, type(None)))}
+                st.json(params)
+            except Exception as e:
+                st.caption(f"No pude listar parámetros: {e}")
+
+        # --- Evaluación rápida en holdout
+        TARGET_DEFAULT = "Natalidad"  # podés cambiarlo si tu objetivo tuviera otro nombre
+        target_col = st.selectbox(
+            "Columna objetivo (y)",
+            options=[c for c in df.columns if c != ""],
+            index=(list(df.columns).index(TARGET_DEFAULT)
+                   if TARGET_DEFAULT in df.columns else 0)
+        )
+
+        if target_col not in df.columns:
+            st.error("No encuentro la columna objetivo en el dataset.")
+        else:
+            from sklearn.model_selection import train_test_split
+            y = df[target_col]
+            X = df.drop(columns=[target_col])
+
+            # detectar tipo de problema según y
+            is_reg = pd.api.types.is_numeric_dtype(y)
+
+            test_size = st.slider("Tamaño de test", 0.1, 0.4, 0.2, 0.05)
+            rs = 42
+            X_tr, X_te, y_tr, y_te = train_test_split(
+                X, y, test_size=test_size, random_state=rs, stratify=None if is_reg else y
+            )
+
+            # el pipeline ya viene entrenado; evaluamos directo sobre X_te
+            try:
+                y_hat = modelo.predict(X_te)
+                if is_reg:
+                    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+                    r2 = r2_score(y_te, y_hat)
+                    mae = mean_absolute_error(y_te, y_hat)
+                    rmse = mean_squared_error(y_te, y_hat, squared=False)
+                    st.subheader("Métricas")
+                    st.write({"R2": round(r2, 3), "MAE": round(mae, 3), "RMSE": round(rmse, 3)})
+                else:
+                    from sklearn.metrics import accuracy_score, f1_score
+                    acc = accuracy_score(y_te, y_hat)
+                    f1w = f1_score(y_te, y_hat, average="weighted")
+                    st.subheader("Métricas")
+                    st.write({"Accuracy": round(acc, 3), "F1 (weighted)": round(f1w, 3)})
+            except Exception as e:
+                st.warning(f"No pude evaluar el modelo con el dataset actual: {e}")
+
+            # --- Importancia de variables (Permutation Importance)
+            with st.expander("Importancia de variables (Permutation Importance)"):
+                try:
+                    from sklearn.inspection import permutation_importance
+                    # muestreamos para que sea rápido y estable
+                    ns = min(300, len(X_te))
+                    Xs = X_te.sample(ns, random_state=rs)
+                    ys = y_te.loc[Xs.index]
+
+                    scoring = "r2" if is_reg else "f1_weighted"
+                    r = permutation_importance(
+                        modelo, Xs, ys, n_repeats=5, random_state=rs, n_jobs=-1, scoring=scoring
+                    )
+                    imp = pd.Series(r.importances_mean, index=Xs.columns).sort_values(ascending=False)
+                    top = imp.head(15).reset_index()
+                    top.columns = ["variable", "importancia"]
+
+                    chart = (
+                        alt.Chart(top)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X("importancia:Q", title="Importancia media (perm.)"),
+                            y=alt.Y("variable:N", sort="-x", title="Variable")
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+                    st.dataframe(top)
+                except Exception as e:
+                    st.caption(f"No pude calcular importancias: {e}")
+
+
 else:
     st.header("Predicción")
     if modelo is None:
@@ -217,8 +315,13 @@ else:
             st.subheader("Formulario")
             inputs = {}
             for c in num_cols:
-                default = float(df[c].median()) if pd.api.types.is_numeric_dtype(df[c]) else 0.0
-                inputs[c] = st.number_input(c, value=default)
+                if c in YEAR_COLS:
+                    years = sorted({int(v) for v in df[c].dropna().astype(int).tolist()})
+                    default_year = max(years) if years else 2000
+                    inputs[c] = st.selectbox(c, options=years, index=years.index(default_year) if default_year in years else 0)
+                else:
+                    default = float(df[c].median()) if pd.api.types.is_numeric_dtype(df[c]) else 0.0
+                    inputs[c] = st.number_input(c, value=default)
             for c in cat_cols:
                 opts = sorted([str(v) for v in df[c].dropna().unique().tolist()]) or ["(vacío)"]
                 inputs[c] = st.selectbox(c, options=opts)
