@@ -119,58 +119,61 @@ if page == "Explorar datos":
         st.caption("No se detectó columna temporal clara.")
 
     # 4) Serie temporal por país (uno o varios)
-st.subheader("4) Natalidad por país (serie temporal)")
+    st.subheader("4) Natalidad por país (serie temporal)")
 
-# detectar columnas de tiempo y de país
-time_cols = [c for c in df.columns if str(c).lower() in ["año", "anio", "year", "fecha", "date"]]
-country_cols = [c for c in df.columns if str(c).lower() in ["pais", "país", "country"]]
+    # detectar columnas de tiempo y de país
+    time_cols_2 = [c for c in df.columns if str(c).lower() in ["año", "anio", "year", "fecha", "date"]]
+    country_cols = [c for c in df.columns if str(c).lower() in ["pais", "país", "country"]]
 
-if time_cols and country_cols:
-    tcol = st.selectbox("Columna temporal", options=time_cols, key="pais_ts_tcol")
-    pcol = st.selectbox("Columna de país", options=country_cols, key="pais_ts_pcol")
-    yvar = st.selectbox("Variable Y (numérica)", options=[c for c in df.select_dtypes('number').columns], index=0, key="pais_ts_y")
+    if time_cols_2 and country_cols:
+        tcol = st.selectbox("Columna temporal", options=time_cols_2, key="pais_ts_tcol")
+        pcol = st.selectbox("Columna de país", options=country_cols, key="pais_ts_pcol")
+        yvar = st.selectbox("Variable Y (numérica)", options=[c for c in df.select_dtypes('number').columns],
+                            index=0, key="pais_ts_y")
 
-    # lista de países
-    opciones = sorted([str(v) for v in df[pcol].dropna().unique().tolist()])
-    sel = st.multiselect("Elegí país(es)", opciones, default=opciones[:1])
+        # lista de países
+        opciones = sorted([str(v) for v in df[pcol].dropna().unique().tolist()])
+        sel = st.multiselect("Elegí país(es)", opciones, default=opciones[:1])
 
-    if sel:
-        dff = df[df[pcol].isin(sel)].copy()
-        # convertir fecha si no es año puro
-        if str(tcol).lower() in ["fecha", "date"]:
-            dff[tcol] = pd.to_datetime(dff[tcol], errors="coerce")
+        if sel:
+            dff = df[df[pcol].isin(sel)].copy()
+            # convertir fecha si no es año puro
+            if str(tcol).lower() in ["fecha", "date"]:
+                dff[tcol] = pd.to_datetime(dff[tcol], errors="coerce")
 
-        # una sola vista con color por país
-        line = (
-            alt.Chart(dff)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X(f"{tcol}:{'T' if str(tcol).lower() in ['fecha','date'] else 'O'}", title=tcol),
-                y=alt.Y(f"{yvar}:Q", title=yvar),
-                color=alt.Color(f"{pcol}:N", title="País"),
-                tooltip=[pcol, tcol, yvar],
-            )
-            .properties(height=380, title="Serie por país (color)")
-            .interactive()
-        )
-        st.altair_chart(line, use_container_width=True)
-
-        # opción de ver 'small multiples' (un panel por país)
-        if st.checkbox("Ver como 'small multiples' (un panel por país)"):
-            facet = (
+            # línea con color por país
+            line = (
                 alt.Chart(dff)
                 .mark_line(point=True)
                 .encode(
                     x=alt.X(f"{tcol}:{'T' if str(tcol).lower() in ['fecha','date'] else 'O'}", title=tcol),
                     y=alt.Y(f"{yvar}:Q", title=yvar),
-                    facet=alt.Facet(f"{pcol}:N", columns=4),
+                    color=alt.Color(f"{pcol}:N", title="País"),
                     tooltip=[pcol, tcol, yvar],
                 )
-                .properties(height=180)
+                .properties(height=380, title="Serie por país (color)")
+                .interactive()
             )
-            st.altair_chart(facet, use_container_width=True)
+            st.altair_chart(line, use_container_width=True)
+
+            # small multiples opcional
+            if st.checkbox("Ver como 'small multiples' (un panel por país)"):
+                facet = (
+                    alt.Chart(dff)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X(f"{tcol}:{'T' if str(tcol).lower() in ['fecha','date'] else 'O'}", title=tcol),
+                        y=alt.Y(f"{yvar}:Q", title=yvar),
+                        facet=alt.Facet(f"{pcol}:N", columns=4),
+                        tooltip=[pcol, tcol, yvar],
+                    )
+                    .properties(height=180)
+                )
+                st.altair_chart(facet, use_container_width=True)
+        else:
+            st.info("Seleccioná al menos un país para graficar.")
     else:
-        st.info("Seleccioná al menos un país para graficar.")
+        st.info("No encontré columnas de tiempo (Año/fecha) y/o país (Pais/País/Country).")
 
 
 elif page == "Modelo":
