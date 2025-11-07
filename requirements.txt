@@ -6,4 +6,4 @@ joblib==1.5.2
 altair>=5.2
 vegafusion>=1.6
 vl-convert-python>=1.6
-
+vega-datasets>=0.9
